@@ -25,7 +25,7 @@ Navigate to the project directory:
    cd peer-to-peer-api
    python3 client.py
    ```
-For new clients, just open a new terminal and redo this step. Then you can communicate!
+For new clients, just open a new terminal and redo this step. Then you can communicate! In the case that a user1 sends a message in "offline" mode, this happens when a user connects then disconnects, then a user2 says something while the server is still active. When user1 logs back in with the same username, it will read from the database, and store any missed messages when offline.
 
 ---
 

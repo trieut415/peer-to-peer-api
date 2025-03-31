@@ -1,60 +1,122 @@
 # server.py
 import socket
 import threading
+import json
+from datetime import datetime
 from common import HOST, PORT, BUFFER_SIZE
+import database
 
-# Global dictionary to store client socket objects with their assigned user IDs.
+# Initialize the database.
+database.init_db()
+
+# Dictionary mapping username to client socket.
 clients = {}
-client_counter = 0
 lock = threading.Lock()
 
-def broadcast(message, sender_socket=None):
-    """Send a message to all clients except the sender."""
-    for client in list(clients):
-        if client != sender_socket:
-            try:
-                client.send(message.encode('utf-8'))
-            except Exception as e:
-                print(f"Error broadcasting to a client: {e}")
-                client.close()
-                with lock:
-                    if client in clients:
-                        del clients[client]
+def broadcast(message_dict, exclude_username=None):
+    """Send a JSON message to all online clients except the excluded user."""
+    message_json = json.dumps(message_dict)
+    with lock:
+        for username, client in clients.items():
+            if username != exclude_username:
+                try:
+                    client.send(message_json.encode('utf-8'))
+                except Exception as e:
+                    print(f"Error broadcasting to {username}: {e}")
+                    client.close()
+                    del clients[username]
 
-def handle_client(client_socket, addr, user_id):
-    """Handle messages from a client, broadcast join/disconnect events."""
-    # Send a welcome message to the newly connected client
-    welcome_message = f"Welcome User{user_id}!"
-    client_socket.send(welcome_message.encode('utf-8'))
-    
-    # Notify all other clients that a new user has connected
-    broadcast(f"User{user_id} has connected.", sender_socket=client_socket)
-    
+def send_offline_messages(username, client_socket):
+    offline_msgs = database.get_offline_messages(username)
+    if offline_msgs:
+        message_ids = []
+        for msg in offline_msgs:
+            msg_id, sender, timestamp, content = msg
+            msg_dict = {
+                "type": "offline_message",
+                "sender": sender,
+                "recipient": username,
+                "timestamp": timestamp,
+                "content": content
+            }
+            try:
+                client_socket.send(json.dumps(msg_dict).encode('utf-8'))
+                message_ids.append(msg_id)
+            except Exception as e:
+                print(f"Error sending offline message to {username}: {e}")
+        # Mark these messages as delivered.
+        database.mark_messages_delivered(message_ids)
+
+def handle_client(client_socket, addr):
+    """Handle login and messages from a client."""
     try:
-        while True:
-            message = client_socket.recv(BUFFER_SIZE)
-            if not message:
-                # No message means the client disconnected.
-                break
-            decoded_message = message.decode("utf-8")
-            full_message = f"User{user_id}: {decoded_message}"
-            print(f"[{addr}] {full_message}")
-            broadcast(full_message, sender_socket=client_socket)
-    except ConnectionResetError:
-        pass
-    finally:
-        client_socket.close()
+        # First expect a login message in JSON format.
+        login_data = client_socket.recv(BUFFER_SIZE).decode("utf-8")
+        login_msg = json.loads(login_data)
+        if login_msg.get("type") != "login" or "username" not in login_msg:
+            client_socket.close()
+            return
+        username = login_msg["username"]
+        # Register the user.
+        database.register_user(username)
         with lock:
-            if client_socket in clients:
-                del clients[client_socket]
-        print(f"User{user_id} disconnected.")
-        broadcast(f"User{user_id} has disconnected.")
+            clients[username] = client_socket
+        
+        # Send welcome message.
+        welcome_msg = {"type": "notification", "content": f"Welcome {username}!"}
+        client_socket.send(json.dumps(welcome_msg).encode('utf-8'))
+        
+        # Notify others that this user connected.
+        broadcast({"type": "notification", "content": f"{username} has connected."}, exclude_username=username)
+        
+        # Send any offline messages.
+        send_offline_messages(username, client_socket)
+        
+        while True:
+            data = client_socket.recv(BUFFER_SIZE)
+            if not data:
+                break
+            try:
+                msg = json.loads(data.decode("utf-8"))
+            except json.JSONDecodeError:
+                continue
+            
+            if msg.get("type") == "message":
+                sender = username
+                content = msg.get("content", "")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                message_dict = {
+                    "type": "message",
+                    "sender": sender,
+                    "recipient": "broadcast",
+                    "timestamp": timestamp,
+                    "content": content
+                }
+                print(f"[{addr}] {sender}: {content}")
+                
+                # Store the message for offline users.
+                all_users = database.get_all_registered_users()
+                # Offline recipients are those registered but not currently online (and not the sender).
+                offline_recipients = [user for user in all_users if user not in clients and user != sender]
+                for recipient in offline_recipients:
+                    database.store_message(sender, recipient, content)
+                
+                # Broadcast to online users.
+                broadcast(message_dict, exclude_username=sender)
+            
+            elif msg.get("type") == "logout":
+                break
+    except Exception as e:
+        print(f"Error handling client {addr}: {e}")
+    finally:
+        with lock:
+            if username in clients:
+                del clients[username]
+        print(f"{username} disconnected.")
+        broadcast({"type": "notification", "content": f"{username} has disconnected."})
 
 def start_server(host=HOST, port=PORT):
-    """Starts the server, accepts new connections, and spawns threads for clients."""
-    global client_counter
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Allow immediate reuse of the address after the server is closed
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((host, port))
     server.listen(5)
@@ -63,14 +125,9 @@ def start_server(host=HOST, port=PORT):
     try:
         while True:
             client_socket, addr = server.accept()
-            with lock:
-                client_counter += 1
-                user_id = client_counter
-                clients[client_socket] = user_id
-            print(f"[NEW CONNECTION] User{user_id} from {addr} connected.")
-            client_thread = threading.Thread(target=handle_client, args=(client_socket, addr, user_id))
+            print(f"[NEW CONNECTION] Connection from {addr}")
+            client_thread = threading.Thread(target=handle_client, args=(client_socket, addr))
             client_thread.start()
-            print(f"[ACTIVE CONNECTIONS] {len(clients)}")
     except KeyboardInterrupt:
         print("Server shutting down...")
     finally:
