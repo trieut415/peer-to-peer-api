@@ -2,7 +2,7 @@
 import socket
 import threading
 import json
-from common import HOST, PORT, BUFFER_SIZE
+from p2pchat.common import HOST, PORT, BUFFER_SIZE
 
 def receive_messages(client_socket):
     """Continuously listens for incoming JSON messages."""

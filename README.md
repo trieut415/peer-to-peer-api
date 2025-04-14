@@ -10,20 +10,26 @@ A simple chat API using Python’s socket module with a client–server architec
 
 1. Open a terminal and navigate to the project directory:
    ```bash
+   git clone https://github.com/yourusername/peer-to-peer-api.git
    cd peer-to-peer-api
+   pip install -e .
    ```
 
 2. Run the server:
    ```bash
-   python3 server.py
+   p2pchat-server
    ```
+   and you should see:
+   ```bash
+   [LISTENING] Server is listening on 127.0.0.1:12345
+   ```
+
 3. Running a Client
 Open a new terminal (or multiple terminals for multiple clients).
 
 Navigate to the project directory:
    ```bash
-   cd peer-to-peer-api
-   python3 client.py
+   p2pchat-client
    ```
 For new clients, just open a new terminal and redo this step. Then you can communicate! In the case that a user1 sends a message in "offline" mode, this happens when a user connects then disconnects, then a user2 says something while the server is still active. When user1 logs back in with the same username, it will read from the database, and store any missed messages when offline.
 

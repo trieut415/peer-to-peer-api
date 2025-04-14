@@ -3,8 +3,8 @@ import socket
 import threading
 import json
 from datetime import datetime
-from common import HOST, PORT, BUFFER_SIZE
-import database
+from p2pchat.common import HOST, PORT, BUFFER_SIZE
+from p2pchat import database
 
 # Initialize the database.
 database.init_db()
